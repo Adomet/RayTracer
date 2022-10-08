@@ -32,7 +32,7 @@ public:
 		ImGui::Text("render took:%.3fms", m_LastRenderTime);
 		if (ImGui::Button("Button"))
 		{
-			m_Renderer.SwitchLight();
+		
 		};
 		ImGui::End();
 

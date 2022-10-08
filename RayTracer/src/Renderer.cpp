@@ -20,22 +20,72 @@ void Renderer::OnResize(uint32_t width, uint32_t height)
 	m_ImageData = new uint32_t[width * height];
 }
 
-void Renderer::SwitchLight()
+glm::vec4 Renderer::PerPixel(uint32_t x , uint32_t y)
 {
-	m_lpos++;
-	m_lpos = (m_lpos % 10);
+	Ray ray;
+	ray.Origin = m_ActiveCamera->GetPosition();
+	ray.Direction = m_ActiveCamera->GetRayDirections()[x + y * m_FinalImage->GetWidth()];
+
+
+	glm::vec3 color(0.0f);
+	int bounces = 4;
+	float multiplier = 1.0f;
+	for (int i = 0; i < bounces; i++)
+	{
+		Renderer::HitPayload payload = TraceRay(ray);
+		if (payload.HitDistance < 0.0f)
+		{
+			glm::vec3 skycolor = glm::vec3(0.1f, 0.1f, 0.1f);
+			color += skycolor * multiplier;
+			break;
+		}
+
+		glm::vec3 LightDir = glm::normalize(glm::vec3(-1, -1, -1));
+		float lightIntansity = glm::max(glm::dot(payload.WorldNormal, -LightDir), 0.0f);
+		glm::vec3 resColor = m_ActiveScene->Spheres[payload.ObjectIndex].Albedo;
+		resColor *= lightIntansity;
+		color += resColor*multiplier;
+		multiplier *= 0.8f;
+
+		ray.Origin = payload.WorldPosition + payload.WorldNormal * 0.0001f;
+		ray.Direction = glm::reflect(ray.Direction, payload.WorldNormal);
+	}
+
+
+	return glm::vec4(color, 1.0f);
 }
 
-glm::vec4 Renderer::TraceRay(const Scene& scene, const Ray& ray)
+Renderer::HitPayload Renderer::ClosestHit(const Ray& ray, float hitDistance, int objectIndex)
 {
 
-	if (scene.Spheres.size() == 0)
-		return glm::vec4(0, 0, 0, 1);
+	Renderer::HitPayload payload;
+	payload.HitDistance = hitDistance;
+	payload.ObjectIndex = objectIndex;
 
-	const Sphere* closestSphere = nullptr;
+	const Sphere& closestSphere = m_ActiveScene->Spheres[objectIndex];
+
+	glm::vec3 origin = ray.Origin - closestSphere.Position;
+	payload.WorldPosition = origin + ray.Direction * hitDistance;
+	payload.WorldNormal = glm::normalize(payload.WorldPosition);
+	payload.WorldPosition += closestSphere.Position;
+
+	return payload;
+}
+
+Renderer::HitPayload Renderer::Miss(const Ray& ray)
+{
+	Renderer::HitPayload payload;
+	payload.HitDistance = -1.0f;
+	return payload;
+}
+
+Renderer::HitPayload Renderer::TraceRay(const Ray& ray)
+{
+	int closestSphere = -1;
 	float minHitDistance = FLT_MAX;
-	for (const Sphere& sphere : scene.Spheres)
+	for (size_t i = 0; i < m_ActiveScene->Spheres.size(); i++)
 	{
+		const Sphere& sphere = m_ActiveScene->Spheres[i];
 		glm::vec3 origin = ray.Origin - sphere.Position;
 
 		// solve quadratic formula to find t hit distance
@@ -49,31 +99,17 @@ glm::vec4 Renderer::TraceRay(const Scene& scene, const Ray& ray)
 			continue;
 
 		float closest = (-b - glm::sqrt(discriminant)) / (2 * a);
-		if (closest < minHitDistance)
+		if (closest > 0.0f && closest < minHitDistance)
 		{
-			closestSphere = &sphere;
 			minHitDistance = closest;
+			closestSphere = (int)i;
 		}
 	}
 
-	if (closestSphere == nullptr)
-		return glm::vec4(0, 0, 0, 1);
+	if (closestSphere < 0)
+		return Miss(ray);
 
-
-	
-	glm::vec3 origin = ray.Origin - closestSphere->Position;
-
-	glm::vec3 hitPoint = origin + ray.Direction * minHitDistance;
-	glm::vec3 normal = glm::normalize(hitPoint);
-
-	glm::vec3 LightDir = glm::normalize(glm::vec3(-1, -1, -1));
-
-
-	float d = glm::max(glm::dot(normal, -LightDir), 0.0f);
-
-	glm::vec3 resColor = closestSphere->Albedo;
-	resColor *= d;
-	return glm::vec4(resColor, 1.0f);
+	return ClosestHit(ray,minHitDistance, closestSphere);
 }
 
 
@@ -92,11 +128,8 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
 {
 	// Render every pixel on viewPort
 
-	const glm::vec3& rayOrigin = camera.GetPosition();
-
-	Ray ray;
-	ray.Origin = rayOrigin;
-
+	m_ActiveScene = &scene;
+	m_ActiveCamera = &camera;
 
 	uint32_t width = m_FinalImage->GetWidth();
 	uint32_t height = m_FinalImage->GetHeight();
@@ -104,12 +137,7 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
 	{
 		for (uint32_t x = 0; x < width; x++)
 		{
-			glm::vec2 coord = {(float)x / (float)width,(float)y / (float)height };
-
-			const glm::vec3& rayDir = camera.GetRayDirections()[x+y*width];
-			ray.Direction = rayDir;
-
-			glm::vec4 color = TraceRay(scene,ray);
+			glm::vec4 color = PerPixel(x,y);
 			color = glm::clamp(color, glm::vec4(0.0f), glm::vec4(1.0f));
 			m_ImageData[x + y * width] = ConvertToRGBA(color);
 		}
@@ -117,5 +145,4 @@ void Renderer::Render(const Scene& scene, const Camera& camera)
 	}
 
 	m_FinalImage->SetData(m_ImageData);
-
 }
